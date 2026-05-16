@@ -42,3 +42,39 @@ Sistemul inteligent trebuie să fie capabil să acopere funcționalități, prec
 ### Optional safety-related sources
 * FDA Recalls (open): https://open.fda.gov/apis/food/enforcement/ (useful pattern for “alerts/recalls” style) 
 * PubMed E-utilities (literature): https://www.ncbi.nlm.nih.gov/books/NBK25501/
+
+## Stage 2 (MVP) implemented: Signal Detection Engine
+
+În acest stage, proiectul calculează semnale statistice pentru combinații medicament-eveniment și le ordonează după importanță.
+
+### Ce calculează
+
+- `PRR` (Proportional Reporting Ratio)
+- `ROR` (Reporting Odds Ratio)
+- `Chi-square` cu corecție Yates
+- `valid_signal` folosind regula: `PRR >= 2`, `n >= 3`, `Chi² >= 4`
+- `score` simplu pentru ranking (frecvență + severitate)
+- trend lunar și flag `emerging` pentru creșteri bruște
+
+### Structură modulară adăugată
+
+- `app/baseline.py` — ia baseline global FAERS (total rapoarte + frecvențe pe evenimente)
+- `app/signals.py` — formulele statistice și ordonarea semnalelor
+- `app/trend.py` — agregare lunară și detecție trend/emergență
+- `app/openfda.py` — helpere noi pentru count-uri agregate (`fetch_total_reports`, `fetch_count_buckets`)
+- `app/runner.py` — integrare CLI pentru stage 2
+
+### Cum rulezi stage 2
+
+Din rădăcina proiectului:
+
+```bash
+python -m app.runner --drug ibuprofen --start 2024-01-01 --end 2024-03-31 --stage2 --top-signals 10
+```
+
+Output-ul este JSON și include:
+
+- totaluri (`drug_total_reports`, `global_total_reports`)
+- lista `signals` ordonată
+- metrici (`prr`, `ror`, `chi_square_yates`, `score`, `valid_signal`)
+- trend pentru fiecare semnal (`latest_month`, `growth_ratio`, `emerging`)
