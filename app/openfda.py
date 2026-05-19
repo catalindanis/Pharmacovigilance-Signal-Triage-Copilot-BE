@@ -9,6 +9,7 @@ import requests
 
 
 OPENFDA_BASE_URL = "https://api.fda.gov/drug/event.json"
+LUCENE_SPECIAL_CHARS = ['\\', '+', '-', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', ':', '/']
 
 
 @dataclass(frozen=True)
@@ -20,13 +21,8 @@ class OpenFDAQuery:
     skip: int = 0
 
     def to_params(self) -> dict[str, str | int]:
-        search_terms = [
-            f'patient.drug.medicinalproduct:"{self.drug_name}"',
-            f"receivedate:[{self.start_date:%Y%m%d} TO {self.end_date:%Y%m%d}]",
-        ]
-
         return {
-            "search": " AND ".join(search_terms),
+            "search": build_openfda_search(self.drug_name, self.start_date, self.end_date),
             "limit": self.limit,
             "skip": self.skip,
         }
@@ -44,6 +40,31 @@ class OpenFDAClient:
         response = requests.get(self.base_url, params=query.to_params(), timeout=self.timeout_seconds)
         response.raise_for_status()
         return response.json()
+
+    def fetch_total_reports(self, search: str) -> int:
+        params: dict[str, str | int] = {"search": search, "limit": 1, "skip": 0}
+        response = requests.get(self.base_url, params=params, timeout=self.timeout_seconds)
+        response.raise_for_status()
+        payload = response.json()
+        return int(payload.get("meta", {}).get("results", {}).get("total", 0))
+
+    def fetch_count_buckets(self, search: str, count_field: str, limit: int = 100) -> dict[str, int]:
+        params: dict[str, str | int] = {
+            "search": search,
+            "count": count_field,
+            "limit": limit,
+        }
+        response = requests.get(self.base_url, params=params, timeout=self.timeout_seconds)
+        response.raise_for_status()
+        payload = response.json()
+        buckets = payload.get("results", [])
+        out: dict[str, int] = {}
+        for item in buckets:
+            term = str(item.get("term", "")).strip()
+            if not term:
+                continue
+            out[term] = int(item.get("count", 0))
+        return out
 
     def fetch_all_pages(self, query: OpenFDAQuery, max_pages: int | None = None) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
@@ -87,6 +108,46 @@ def normalize_date_range(start_date: date, end_date: date) -> tuple[date, date]:
 def build_search_string(drug_name: str, start_date: date, end_date: date) -> str:
     query = OpenFDAQuery(drug_name=drug_name, start_date=start_date, end_date=end_date)
     return query.to_params()["search"]
+
+
+def build_openfda_search(drug_name: str, start_date: date, end_date: date) -> str:
+    escaped_drug_name = escape_search_term(drug_name)
+    search_terms = [
+        f'patient.drug.medicinalproduct:"{escaped_drug_name}"',
+        f"receivedate:[{start_date:%Y%m%d} TO {end_date:%Y%m%d}]",
+    ]
+    return " AND ".join(search_terms)
+
+
+def build_date_range_search(start_date: date, end_date: date) -> str:
+    return f"receivedate:[{start_date:%Y%m%d} TO {end_date:%Y%m%d}]"
+
+
+def build_event_search(event_term: str, start_date: date, end_date: date) -> str:
+    escaped_event_term = escape_search_term(event_term)
+    search_terms = [
+        f'patient.reaction.reactionmeddrapt.exact:"{escaped_event_term}"',
+        build_date_range_search(start_date, end_date),
+    ]
+    return " AND ".join(search_terms)
+
+
+def build_drug_event_search(drug_name: str, event_term: str, start_date: date, end_date: date) -> str:
+    escaped_drug_name = escape_search_term(drug_name)
+    escaped_event_term = escape_search_term(event_term)
+    search_terms = [
+        f'patient.drug.medicinalproduct:"{escaped_drug_name}"',
+        f'patient.reaction.reactionmeddrapt.exact:"{escaped_event_term}"',
+        build_date_range_search(start_date, end_date),
+    ]
+    return " AND ".join(search_terms)
+
+
+def escape_search_term(value: str) -> str:
+    escaped = value
+    for char in LUCENE_SPECIAL_CHARS:
+        escaped = escaped.replace(char, f"\\{char}")
+    return escaped
 
 
 def collect_report_ids(records: Iterable[dict[str, Any]]) -> list[str]:
