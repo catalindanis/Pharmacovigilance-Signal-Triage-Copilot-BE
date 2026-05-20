@@ -50,11 +50,12 @@ class RxNormClient:
         return top.get("rxcui")
 
     def get_generic_rxcui(self, rxcui: str) -> Optional[str]:
-        data = self._get(f"rxcui/{rxcui}/generic")
-        idg = data.get("idGroup", {})
-        ids = idg.get("rxnormId")
-        if ids:
-            return str(ids[0])
+        data = self._get(f"rxcui/{rxcui}/related", {"tty": "IN"})
+        groups = data.get("relatedGroup", {}).get("conceptGroup") or []
+        for group in groups:
+            props = group.get("conceptProperties") or []
+            if props:
+                return str(props[0].get("rxcui"))
         return None
 
     def get_properties(self, rxcui: str) -> Optional[Dict[str, Any]]:
