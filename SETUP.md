@@ -1,12 +1,12 @@
 # Setup local
 
-Acest ghid explică cum instalezi dependențele și cum rulezi aplicația local pe Windows.
+Acest ghid vă învață cum instalezi dependențele, cum îți generezi baza de date locală și cum rulezi aplicația local pe Windows.
 
 ## Cerințe
 
 - Python 3.10+ instalat
 - `pip` disponibil
-- Acces la internet dacă vrei să rulezi modul live (openFDA / RxNorm)
+- Acces la internet dacă vrei să rulezi modul live (openFDA / RxNorm) sau pentru descărcarea inițială a seturilor de date.
 
 ## 1. Creează și activează mediul virtual
 
@@ -34,7 +34,19 @@ Acest proiect folosește:
 - `requests` pentru apeluri HTTP către openFDA și RxNorm
 - `pytest` pentru teste
 
-## 3. Rulează aplicația
+## 3. Generarea bazei de date locale (Recomandat)
+
+Pentru a evita limitările de rețea (Rate Limiting) și a rula analize mult mai rapid, este recomandat să folosești baza de date locală SQLite.
+
+Rulează acest script pentru a descărca primele arhive de la FDA (default 2), a le normaliza cu RxNorm și a popula fișierul .db (poate dura câteva minute).
+
+```powershell
+python -m database.seed_db --limit 2
+```
+
+*Notă: Acest script va crea un fișier `faers_local.db` în folderul proiectului.*
+
+## 4. Rulează aplicația
 
 ### Mod demo
 
@@ -42,6 +54,14 @@ Modul demo folosește un record local și nu face apeluri la internet:
 
 ```powershell
 python -m app.runner --demo --drug ibuprofen --start 2024-01-01 --end 2024-12-31
+```
+
+### Mod cu bază de date locală
+
+Modul acesta folosește datele deja salvate (nu are nevoie de normalizare):
+
+```powershell
+python -m app.runner --local-db --drug ibuprofen -- start 2004-01-01 --end 2024-12-31
 ```
 
 ### Mod live
@@ -64,6 +84,9 @@ python -m app.runner --drug ibuprofen --start 2024-01-01 --end 2024-01-31 --norm
 
 - `--drug` este obligatoriu și reprezintă numele medicamentului
 - `--start` și `--end` sunt obligatorii și acceptă formatul `YYYY-MM-DD` sau `YYYYMMDD`
+- `--local-db` forțează citirea din baza de date locală SQLite în loc de API-ul FDA
+- `--stage2` rulează faza 2 de detecție a semnalelor statistice (PRR, ROR, trenduri)
+- `--normalize` trece input-ul prin RxNorm pentru a obține substanța activă
 - `--limit` controlează mărimea paginii pentru openFDA
 - `--max-pages` limitează numărul de pagini descărcate, util la testare
 
@@ -82,6 +105,10 @@ Dacă `pytest` nu este disponibil în mediul activ, verifică mai întâi că ai
 - `app/openfda.py` - client openFDA și paginare
 - `app/transform.py` - extragere și deduplicare cazuri
 - `app/rxnorm.py` - normalizare opțională a medicamentelor
+- `app/baseline.py` & `app/signals.py` - algoritmii statistici pentru disproporționalitate
+- `app/trend.py` - analiza trendului în timp
+- `database/seed_db.py` - script pentru descărcarea arhivelor bulk și popularea SQLite
+- `database/db_manager.py` - baza de date și interogările SQL
 - `app/runner.py` - CLI principal
 - `tests/` - teste unitare
 
