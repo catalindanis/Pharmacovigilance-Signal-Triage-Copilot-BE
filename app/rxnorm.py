@@ -23,10 +23,11 @@ class RxNormClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._cache: Dict[str, RxNormResult] = {}
+        self.session = requests.Session()
 
     def _get(self, path: str, params: Dict[str, Any] | None = None) -> Dict[str, Any]:
         url = f"{self.base_url}/{path.lstrip('/')}.json"
-        resp = requests.get(url, params=params, timeout=self.timeout)
+        resp = self.session.get(url, params=params, timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()
 

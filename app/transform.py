@@ -18,7 +18,7 @@ class CleanCase:
     raw: Dict[str, Any]
     patient_age: str | None
     patient_sex: str | None
-
+    substance: str | None = None
 
 def _parse_receivedate(raw_date: str) -> str:
     # openFDA uses YYYYMMDD in many fields; convert to ISO date where possible

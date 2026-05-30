@@ -1,3 +1,4 @@
+import concurrent.futures
 import json
 import argparse
 import requests
@@ -5,6 +6,7 @@ import zipfile
 import io
 from app.transform import extract_cases_from_record, deduplicate_cases
 from database.db_manager import get_connection, init_db, bulk_insert_cases
+from app.rxnorm import RxNormClient
 
 FDA_DOWNLOADS_URL = "https://api.fda.gov/download.json"
 
@@ -41,6 +43,8 @@ def main():
     conn = get_connection(args.db)
     init_db(conn)
 
+    rx_client = RxNormClient()
+
     for idx, url in enumerate(links, start=1):
         print(f"\n[{idx}/{len(links)}] Now processing: {url}")
 
@@ -62,6 +66,30 @@ def main():
 
             all_cases = deduplicate_cases(all_cases)
             print(f" -> Ready for insert: {len(all_cases)} unique cases.")
+
+            unique_drugs = {case.drug for case in all_cases if case.drug}
+            drug_mapping = {}
+
+            def fetch_norm(drug):
+                try:
+                    norm_result = rx_client.normalize_name(drug)
+                    generic = norm_result.generic_name.upper() if norm_result.generic_name else drug.upper()
+                    return drug, generic
+                except Exception:
+                    return drug, drug.upper()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                results = executor.map(fetch_norm, unique_drugs)
+
+                for i, (drug, generic) in enumerate(results):
+                    drug_mapping[drug] = generic
+                    print(f" -> Processed {i + 1}/{len(unique_drugs)} drugs...")
+
+            for case in all_cases:
+                if case.drug:
+                    case.substance = drug_mapping.get(case.drug, case.drug.upper())
+                else:
+                    case.substance = "UNKNOWN"
 
             bulk_insert_cases(conn, all_cases)
             print(" Archive saved successfully.")
