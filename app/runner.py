@@ -12,6 +12,7 @@ from .signals import build_signal_metrics
 from .trend import build_monthly_event_counts, detect_event_trends
 from .transform import CleanCase, extract_cases_from_record, deduplicate_cases
 from .rxnorm import RxNormClient
+from database.db_manager import fetch_cases_from_db
 
 
 def parse_date(s: str) -> date:
@@ -76,20 +77,33 @@ def run_live(
     normalize_reactions: bool = False,
     stage2: bool = False,
     top_signals: int = 20,
+    use_local_db: bool = False,
 ) -> None:
     client = OpenFDAClient()
-    q = OpenFDAQuery(drug_name=drug_name, start_date=start, end_date=end, limit=limit, skip=0)
-    print(f"Querying openFDA for '{drug_name}' from {start} to {end} (limit={limit})")
-
-    records = client.fetch_all_pages(q, max_pages=max_pages)
-    print(f"Fetched {len(records)} raw records")
-
     cases = []
-    for r in records:
-        cases.extend(extract_cases_from_record(r, match_drug_name=drug_name))
 
-    cases = deduplicate_cases(cases)
-    print(f"Extracted {len(cases)} unique cases (after deduplication)")
+    if use_local_db:
+        print("Normalizing input...")
+        rx_client = RxNormClient()
+        norm_result = rx_client.normalize_name(drug_name)
+
+        search_substance = norm_result.generic_name.upper() if norm_result.generic_name else drug_name.upper()
+
+        print(f"Querying database for '{search_substance}' from {start} to {end}")
+        cases = fetch_cases_from_db("faers_local.db", search_substance, start, end)
+        print(f"Fetched {len(cases)} cases")
+    else:
+        q = OpenFDAQuery(drug_name=drug_name, start_date=start, end_date=end, limit=limit, skip=0)
+        print(f"Querying openFDA for '{drug_name}' from {start} to {end} (limit={limit})")
+
+        records = client.fetch_all_pages(q, max_pages=max_pages)
+        print(f"Fetched {len(records)} raw records")
+
+        for r in records:
+            cases.extend(extract_cases_from_record(r, match_drug_name=drug_name))
+
+        cases = deduplicate_cases(cases)
+        print(f"Extracted {len(cases)} unique cases (after deduplication)")
 
     if stage2:
         print("Running phase 2 signal detection...")
@@ -202,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--normalize", action="store_true", help="Normalize drug names via RxNorm")
     parser.add_argument("--stage2", action="store_true", help="Run phase 2 signal detection (PRR/ROR/trend)")
     parser.add_argument("--top-signals", type=int, default=20, help="Number of top signals to output in stage 2")
+    parser.add_argument("--local-db", action="store_true", help="Use local database")
 
     args = parser.parse_args(argv)
 
@@ -221,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
             normalize=args.normalize,
             stage2=args.stage2,
             top_signals=args.top_signals,
+            use_local_db=args.local_db
         )
 
     return 0

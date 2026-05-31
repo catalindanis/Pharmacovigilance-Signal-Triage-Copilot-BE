@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List
 
+from pygments.lexers import clean
+
 
 @dataclass
 class CleanCase:
@@ -16,7 +18,7 @@ class CleanCase:
     raw: Dict[str, Any]
     patient_age: str | None
     patient_sex: str | None
-
+    substance: str | None = None
 
 def _parse_receivedate(raw_date: str) -> str:
     # openFDA uses YYYYMMDD in many fields; convert to ISO date where possible
@@ -40,7 +42,7 @@ def extract_cases_from_record(record: Dict[str, Any], match_drug_name: str | Non
     """Extract one or more CleanCase objects from a single FAERS record.
 
     If match_drug_name is provided, only drugs whose medicinalproduct contains
-    that string (case-insensitive) will be returned. Otherwise all drugs in the
+    that string (case-insensitive) will be returned. Otherwise, all drugs in the
     record are turned into cases.
     """
     patient = record.get("patient", {}) or {}
@@ -53,6 +55,45 @@ def extract_cases_from_record(record: Dict[str, Any], match_drug_name: str | Non
         if term:
             reaction_terms.append(term)
 
+    GENDER_MAP = {
+        "0": "Unknown",
+        "1": "Male",
+        "2": "Female",
+    }
+
+    COUNTRY_MAP = {
+        "AU": "AUSTRALIA",
+        "BE": "BELGIUM",
+        "BR": "BRAZIL",
+        "CA": "CANADA",
+        "CH": "SWITZERLAND",
+        "CL": "CHILE",
+        "CN": "CHINA",
+        "CO": "COLOMBIA",
+        "DE": "GERMANY",
+        "ES": "SPAIN",
+        "FR": "FRANCE",
+        "GB": "UNITED KINGDOM",
+        "UK": "UNITED KINGDOM",
+        "HU": "HUNGARY",
+        "IL": "ISRAEL",
+        "IN": "INDIA",
+        "IE": "IRELAND",
+        "IT": "ITALY",
+        "JP": "JAPAN",
+        "MY": "MALAYSIA",
+        "MX": "MEXICO",
+        "NL": "NETHERLANDS",
+        "NZ": "NEW ZEALAND",
+        "PH": "PHILIPPINES",
+        "PR": "PUERTO RICO",
+        "SG": "SINGAPORE",
+        "SI": "SLOVENIA",
+        "TR": "TURKEY",
+        "US": "UNITED STATES"
+        # ...
+    }
+
     cases: List[CleanCase] = []
     for d in drugs:
         med = d.get("medicinalproduct")
@@ -64,11 +105,27 @@ def extract_cases_from_record(record: Dict[str, Any], match_drug_name: str | Non
         safetyreportid = record.get("safetyreportid") or ""
         received = record.get("receivedate") or record.get("receiptdate") or ""
         report_date = _parse_receivedate(received)
-        country = record.get("occurcountry") or record.get("primarysourcecountry")
+
+        raw_country = record.get("occurcountry")
+        if not raw_country:
+            primary_source = record.get("primarysource") or {}
+            raw_country = primary_source.get("reportercountry")
+
+        if raw_country:
+            clean_country = str(raw_country).strip().upper()
+            country = COUNTRY_MAP.get(clean_country, clean_country)
+        else:
+            country = None
+
         serious_flag = record.get("serious")
         serious = serious_flag in ("1", 1, True, "true", "True")
         age = _normalize_optional_text(patient.get("patientonsetage") or record.get("patientonsetage"))
-        sex = _normalize_optional_text(patient.get("patientsex") or record.get("patientsex"))
+
+        raw_sex = patient.get("patientsex")
+        if raw_sex is not None:
+            sex = GENDER_MAP.get(str(raw_sex).strip(), "Unknown")
+        else:
+            sex = None
 
         cases.append(
             CleanCase(
