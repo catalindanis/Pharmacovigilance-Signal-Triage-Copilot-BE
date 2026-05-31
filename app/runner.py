@@ -7,6 +7,7 @@ from math import isinf
 from typing import Any
 
 from .baseline import fetch_global_baseline
+from .explainer import generate_signal_packets
 from .openfda import OpenFDAClient, OpenFDAQuery, normalize_date_range
 from .signals import build_signal_metrics
 from .trend import build_monthly_event_counts, detect_event_trends
@@ -67,6 +68,95 @@ def _build_event_counts(cases: list[CleanCase]) -> dict[str, int]:
     return event_counts
 
 
+def build_stage2_payload(
+    drug_name: str,
+    start: date,
+    end: date,
+    limit: int,
+    max_pages: int | None,
+    use_local_db: bool = False,
+    top_signals: int = 20,
+) -> dict[str, Any]:
+    client = OpenFDAClient()
+    cases: list[CleanCase] = []
+
+    if use_local_db:
+        rx_client = RxNormClient()
+        norm_result = rx_client.normalize_name(drug_name)
+        search_substance = norm_result.generic_name.upper() if norm_result.generic_name else drug_name.upper()
+        cases = fetch_cases_from_db("faers_local.db", search_substance, start, end)
+    else:
+        q = OpenFDAQuery(drug_name=drug_name, start_date=start, end_date=end, limit=limit, skip=0)
+        records = client.fetch_all_pages(q, max_pages=max_pages)
+
+        for record in records:
+            cases.extend(extract_cases_from_record(record, match_drug_name=drug_name))
+
+        cases = deduplicate_cases(cases)
+
+    drug_event_counts = _build_event_counts(cases)
+    drug_total_reports = len(cases)
+    candidate_events = sorted(event for event, count in drug_event_counts.items() if count >= 3)
+    global_baseline = fetch_global_baseline(
+        client,
+        start,
+        end,
+        observed_events=candidate_events,
+    )
+
+    serious_event_counts = _build_serious_event_counts(cases)
+    signal_metrics = build_signal_metrics(
+        drug_event_counts=drug_event_counts,
+        all_event_counts=global_baseline.event_counts,
+        serious_event_counts=serious_event_counts,
+        n_drug_total=drug_total_reports,
+        n_all_total=global_baseline.total_reports,
+    )
+
+    trend_map = detect_event_trends(build_monthly_event_counts(cases))
+
+    output_signals = []
+    for metric in signal_metrics[:top_signals]:
+        trend = trend_map.get(metric.event)
+        growth = None
+        if trend is not None:
+            growth = "inf" if isinf(trend.growth_ratio) else round(trend.growth_ratio, 4)
+
+        output_signals.append(
+            {
+                "event": metric.event,
+                "n_drug_event": metric.n_drug_event,
+                "n_drug_total": metric.n_drug_total,
+                "n_all_event": metric.n_all_event,
+                "n_all_total": metric.n_all_total,
+                "prr": round(metric.prr, 4),
+                "ror": "inf" if isinf(metric.ror) else round(metric.ror, 4),
+                "chi_square_yates": round(metric.chi_square_yates, 4),
+                "serious_ratio": round(metric.serious_ratio, 4),
+                "frequency_ratio": round(metric.frequency_ratio, 4),
+                "score": round(metric.score, 4),
+                "valid_signal": metric.valid_signal,
+                "trend": {
+                    "latest_month": trend.latest_month if trend else None,
+                    "latest_count": trend.latest_count if trend else 0,
+                    "baseline_average": round(trend.baseline_average, 4) if trend else 0.0,
+                    "growth_ratio": growth,
+                    "emerging": trend.emerging if trend else False,
+                },
+            }
+        )
+
+    return {
+        "drug": drug_name,
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "drug_total_reports": drug_total_reports,
+        "global_total_reports": global_baseline.total_reports,
+        "signal_count": len(signal_metrics),
+        "signals": output_signals,
+    }
+
+
 def run_live(
     drug_name: str,
     start: date,
@@ -78,7 +168,30 @@ def run_live(
     stage2: bool = False,
     top_signals: int = 20,
     use_local_db: bool = False,
+    explain_signals: bool = False,
 ) -> None:
+    if stage2:
+        print("Running phase 2 signal detection...")
+        payload = build_stage2_payload(
+            drug_name=drug_name,
+            start=start,
+            end=end,
+            limit=limit,
+            max_pages=max_pages,
+            use_local_db=use_local_db,
+        )
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+        if explain_signals:
+            packets = generate_signal_packets(payload)
+            print()
+            print("# Signal Evidence Packets")
+            for index, packet in enumerate(packets, start=1):
+                print()
+                print(f"## {index}. {packet.event}")
+                print(packet.markdown)
+        return
+
     client = OpenFDAClient()
     cases = []
 
@@ -104,73 +217,6 @@ def run_live(
 
         cases = deduplicate_cases(cases)
         print(f"Extracted {len(cases)} unique cases (after deduplication)")
-
-    if stage2:
-        print("Running phase 2 signal detection...")
-
-        drug_event_counts = _build_event_counts(cases)
-        drug_total_reports = len(cases)
-        candidate_events = sorted(event for event, count in drug_event_counts.items() if count >= 3)
-        global_baseline = fetch_global_baseline(
-            client,
-            start,
-            end,
-            observed_events=candidate_events,
-        )
-
-        serious_event_counts = _build_serious_event_counts(cases)
-        signal_metrics = build_signal_metrics(
-            drug_event_counts=drug_event_counts,
-            all_event_counts=global_baseline.event_counts,
-            serious_event_counts=serious_event_counts,
-            n_drug_total=drug_total_reports,
-            n_all_total=global_baseline.total_reports,
-        )
-
-        trend_map = detect_event_trends(build_monthly_event_counts(cases))
-
-        output_signals = []
-        for metric in signal_metrics[:top_signals]:
-            trend = trend_map.get(metric.event)
-            growth = None
-            if trend is not None:
-                growth = "inf" if isinf(trend.growth_ratio) else round(trend.growth_ratio, 4)
-
-            output_signals.append(
-                {
-                    "event": metric.event,
-                    "n_drug_event": metric.n_drug_event,
-                    "n_drug_total": metric.n_drug_total,
-                    "n_all_event": metric.n_all_event,
-                    "n_all_total": metric.n_all_total,
-                    "prr": round(metric.prr, 4),
-                    "ror": "inf" if isinf(metric.ror) else round(metric.ror, 4),
-                    "chi_square_yates": round(metric.chi_square_yates, 4),
-                    "serious_ratio": round(metric.serious_ratio, 4),
-                    "frequency_ratio": round(metric.frequency_ratio, 4),
-                    "score": round(metric.score, 4),
-                    "valid_signal": metric.valid_signal,
-                    "trend": {
-                        "latest_month": trend.latest_month if trend else None,
-                        "latest_count": trend.latest_count if trend else 0,
-                        "baseline_average": round(trend.baseline_average, 4) if trend else 0.0,
-                        "growth_ratio": growth,
-                        "emerging": trend.emerging if trend else False,
-                    },
-                }
-            )
-
-        payload = {
-            "drug": drug_name,
-            "start_date": start.isoformat(),
-            "end_date": end.isoformat(),
-            "drug_total_reports": drug_total_reports,
-            "global_total_reports": global_baseline.total_reports,
-            "signal_count": len(signal_metrics),
-            "signals": output_signals,
-        }
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-        return
 
     norm_cache: dict[str, dict] = {}
     rx: RxNormClient | None = None
@@ -217,6 +263,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stage2", action="store_true", help="Run phase 2 signal detection (PRR/ROR/trend)")
     parser.add_argument("--top-signals", type=int, default=20, help="Number of top signals to output in stage 2")
     parser.add_argument("--local-db", action="store_true", help="Use local database")
+    parser.add_argument("--explain-signals", action="store_true", help="Generate Markdown signal evidence packets after stage 2 output")
 
     args = parser.parse_args(argv)
 
@@ -236,7 +283,8 @@ def main(argv: list[str] | None = None) -> int:
             normalize=args.normalize,
             stage2=args.stage2,
             top_signals=args.top_signals,
-            use_local_db=args.local_db
+            use_local_db=args.local_db,
+            explain_signals=args.explain_signals,
         )
 
     return 0

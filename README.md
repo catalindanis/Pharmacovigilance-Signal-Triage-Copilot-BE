@@ -43,6 +43,69 @@ Sistemul inteligent trebuie să fie capabil să acopere funcționalități, prec
 * FDA Recalls (open): https://open.fda.gov/apis/food/enforcement/ (useful pattern for “alerts/recalls” style) 
 * PubMed E-utilities (literature): https://www.ncbi.nlm.nih.gov/books/NBK25501/
 
+### Stage 3 (in progress): LLM Signal Explainer
+
+The new explainer module turns the stage-2 JSON payload into a Markdown signal evidence packet for each returned signal. It is implemented in `app/explainer.py` and currently targets Gemini.
+
+Expected environment variable:
+
+```bash
+GEMINI_API_KEY=your_key_here
+```
+
+Primary entry points:
+
+- `build_signal_packet_prompt(signals_json, signal_index=0)` - builds the prompt for one signal.
+- `generate_signal_packets(signals_json, api_key=None)` - generates packets for every signal in order.
+- `generate_signal_packet(signals_json, api_key=None)` - returns the Markdown for the first packet, matching the simple example-style workflow.
+
+### JSON API endpoint
+
+The backend now exposes the signal packets as JSON for frontend consumption.
+
+Run locally:
+
+```bash
+uvicorn app.api:app --reload
+```
+
+Endpoint:
+
+- `POST /api/explain`
+
+Example request body:
+
+```json
+{
+    "drug": "Ibuprofen",
+    "signals": [
+        {
+            "event": "OFF LABEL USE",
+            "n_drug_event": 4,
+            "n_drug_total": 15,
+            "n_all_event": 82,
+            "n_all_total": 1508,
+            "prr": 4.9041,
+            "ror": 6.5967,
+            "chi_square_yates": 9.4362,
+            "serious_ratio": 1.0,
+            "frequency_ratio": 0.2667,
+            "score": 0.56,
+            "valid_signal": true,
+            "trend": {
+                "latest_month": "2024-01",
+                "latest_count": 4,
+                "baseline_average": 0.0,
+                "growth_ratio": "inf",
+                "emerging": true
+            }
+        }
+    ]
+}
+```
+
+The response contains a `packets[]` array with one JSON packet per signal, including `medical_context`, `statistical_justification`, `trend_analysis`, `priority`, `next_steps`, and `markdown`.
+
 ## Stage 2 (MVP) implemented: Signal Detection Engine
 
 În acest stage, proiectul calculează semnale statistice pentru combinații medicament-eveniment și le ordonează după importanță.
