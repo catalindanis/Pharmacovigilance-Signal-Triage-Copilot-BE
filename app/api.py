@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from .explainer import generate_signal_packet_payloads
 from .runner import build_stage2_payload, parse_date
 
+from fastapi.middleware.cors import CORSMiddleware
 
 class ExplainRequest(BaseModel):
     drug: str
@@ -42,6 +43,13 @@ class ExplainResponse(BaseModel):
 
 app = FastAPI(title="Pharmacovigilance Signal Triage API", version="0.1.0")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -58,7 +66,7 @@ def explain_signals(payload: ExplainRequest) -> ExplainResponse:
         end=end,
         limit=payload.limit,
         max_pages=payload.max_pages,
-        use_local_db=payload.use_local_db,
+        use_local_db=True,
     )
     packets = generate_signal_packet_payloads(stage2_payload)
     return ExplainResponse(
