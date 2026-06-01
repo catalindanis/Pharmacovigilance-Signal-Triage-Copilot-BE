@@ -61,7 +61,7 @@ python -m app.runner --demo --drug ibuprofen --start 2024-01-01 --end 2024-12-31
 Modul acesta folosește datele deja salvate (nu are nevoie de normalizare):
 
 ```powershell
-python -m app.runner --local-db --drug ibuprofen -- start 2004-01-01 --end 2024-12-31
+python -m app.runner --local-db --drug ibuprofen --start 2004-01-01 --end 2024-12-31
 ```
 
 ### Mod live

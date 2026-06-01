@@ -2,12 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-
-import requests
-
-from .openfda import OpenFDAClient, build_date_range_search, build_event_search, build_openfda_search
-
-REACTION_FIELD = "patient.reaction.reactionmeddrapt.exact"
+import sqlite3
 
 
 @dataclass(frozen=True)
@@ -23,44 +18,33 @@ class DrugWindowStats:
 
 
 def fetch_global_baseline(
-    client: OpenFDAClient,
-    start_date: date,
-    end_date: date,
-    observed_events: list[str] | None = None,
-    event_count_limit: int = 1000,
+        conn: sqlite3.Connection,
+        start_date: date,
+        end_date: date,
+        event_count_limit: int = 1000,
 ) -> GlobalBaseline:
-    search = build_date_range_search(start_date, end_date)
-    total_reports = client.fetch_total_reports(search)
+    cursor = conn.cursor()
 
-    try:
-        event_counts = client.fetch_count_buckets(
-            search=search,
-            count_field=REACTION_FIELD,
-            limit=event_count_limit,
-        )
-    except requests.RequestException:
-        if not observed_events:
-            raise
-        event_counts = {}
-        for event in observed_events:
-            event_search = build_event_search(event, start_date, end_date)
-            event_counts[event] = client.fetch_total_reports(event_search)
+    start_str = start_date.isoformat()
+    end_str = end_date.isoformat()
+
+    cursor.execute('''
+        SELECT COUNT(DISTINCT safetyreportid)
+        FROM cases
+        WHERE report_date BETWEEN ? AND ?
+        ''', (start_str, end_str))
+    total_reports = cursor.fetchone()[0] or 0
+
+    cursor.execute('''
+       SELECT r.reaction, COUNT(DISTINCT c.safetyreportid) as count
+       FROM reactions r
+                JOIN cases c ON r.safetyreportid = c.safetyreportid
+       WHERE c.report_date BETWEEN ? AND ?
+       GROUP BY r.reaction
+       ORDER BY count DESC
+       LIMIT ?
+       ''', (start_str, end_str, event_count_limit))
+
+    event_counts = {row[0]: row[1] for row in cursor.fetchall()}
 
     return GlobalBaseline(total_reports=total_reports, event_counts=event_counts)
-
-
-def fetch_drug_window_stats(
-    client: OpenFDAClient,
-    drug_name: str,
-    start_date: date,
-    end_date: date,
-    event_count_limit: int = 1000,
-) -> DrugWindowStats:
-    search = build_openfda_search(drug_name, start_date, end_date)
-    total_reports = client.fetch_total_reports(search)
-    event_counts = client.fetch_count_buckets(
-        search=search,
-        count_field=REACTION_FIELD,
-        limit=event_count_limit,
-    )
-    return DrugWindowStats(total_reports=total_reports, event_counts=event_counts)

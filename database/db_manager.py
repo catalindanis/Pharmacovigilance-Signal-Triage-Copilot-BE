@@ -66,8 +66,7 @@ def bulk_insert_cases(conn: sqlite3.Connection, cases: List[CleanCase]) -> None:
     conn.commit()
 
 
-def fetch_cases_from_db(db_path: str, substance_name: str, start_date: date, end_date: date) -> List[CleanCase]:
-    conn = sqlite3.connect(db_path)
+def fetch_cases_from_db(conn: sqlite3.Connection, substance_name: str, start_date: date, end_date: date) -> List[CleanCase]:
     cursor = conn.cursor()
 
     query = '''
@@ -101,5 +100,4 @@ def fetch_cases_from_db(db_path: str, substance_name: str, start_date: date, end
         )
         cases.append(c)
 
-    conn.close()
     return cases

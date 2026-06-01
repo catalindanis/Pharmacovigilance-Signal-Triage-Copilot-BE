@@ -43,3 +43,8 @@ data/cache/
 *.sqlite3
 *.db
 *.log
+
+# LLM model, settings and training data
+*.jsonl
+*.gguf
+Modelfile
