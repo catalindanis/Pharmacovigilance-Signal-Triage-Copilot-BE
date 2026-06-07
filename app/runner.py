@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import datetime, date
+import sqlite3
 from math import isinf
 from typing import Any
 
 from .baseline import fetch_global_baseline
-from .explainer import generate_signal_packets
 from .openfda import OpenFDAClient, OpenFDAQuery, normalize_date_range
 from .signals import build_signal_metrics
 from .trend import build_monthly_event_counts, detect_event_trends
@@ -80,11 +80,13 @@ def build_stage2_payload(
     client = OpenFDAClient()
     cases: list[CleanCase] = []
 
+    conn = sqlite3.connect("faers_local.db")
+
     if use_local_db:
         rx_client = RxNormClient()
         norm_result = rx_client.normalize_name(drug_name)
         search_substance = norm_result.generic_name.upper() if norm_result.generic_name else drug_name.upper()
-        cases = fetch_cases_from_db("faers_local.db", search_substance, start, end)
+        cases = fetch_cases_from_db(conn, search_substance, start, end)
     else:
         q = OpenFDAQuery(drug_name=drug_name, start_date=start, end_date=end, limit=limit, skip=0)
         records = client.fetch_all_pages(q, max_pages=max_pages)
@@ -96,13 +98,13 @@ def build_stage2_payload(
 
     drug_event_counts = _build_event_counts(cases)
     drug_total_reports = len(cases)
-    candidate_events = sorted(event for event, count in drug_event_counts.items() if count >= 3)
+
     global_baseline = fetch_global_baseline(
-        client,
+        conn,
         start,
         end,
-        observed_events=candidate_events,
     )
+    conn.close()
 
     serious_event_counts = _build_serious_event_counts(cases)
     signal_metrics = build_signal_metrics(
@@ -168,7 +170,6 @@ def run_live(
     stage2: bool = False,
     top_signals: int = 20,
     use_local_db: bool = False,
-    explain_signals: bool = False,
 ) -> None:
     if stage2:
         print("Running phase 2 signal detection...")
@@ -181,19 +182,12 @@ def run_live(
             use_local_db=use_local_db,
         )
         print(json.dumps(payload, indent=2, ensure_ascii=False))
-
-        if explain_signals:
-            packets = generate_signal_packets(payload)
-            print()
-            print("# Signal Evidence Packets")
-            for index, packet in enumerate(packets, start=1):
-                print()
-                print(f"## {index}. {packet.event}")
-                print(packet.markdown)
         return
 
     client = OpenFDAClient()
     cases = []
+
+    conn = sqlite3.connect("faers_local.db")
 
     if use_local_db:
         print("Normalizing input...")
@@ -203,7 +197,7 @@ def run_live(
         search_substance = norm_result.generic_name.upper() if norm_result.generic_name else drug_name.upper()
 
         print(f"Querying database for '{search_substance}' from {start} to {end}")
-        cases = fetch_cases_from_db("faers_local.db", search_substance, start, end)
+        cases = fetch_cases_from_db(conn, search_substance, start, end)
         print(f"Fetched {len(cases)} cases")
     else:
         q = OpenFDAQuery(drug_name=drug_name, start_date=start, end_date=end, limit=limit, skip=0)
@@ -263,7 +257,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stage2", action="store_true", help="Run phase 2 signal detection (PRR/ROR/trend)")
     parser.add_argument("--top-signals", type=int, default=20, help="Number of top signals to output in stage 2")
     parser.add_argument("--local-db", action="store_true", help="Use local database")
-    parser.add_argument("--explain-signals", action="store_true", help="Generate Markdown signal evidence packets after stage 2 output")
 
     args = parser.parse_args(argv)
 
@@ -284,7 +277,6 @@ def main(argv: list[str] | None = None) -> int:
             stage2=args.stage2,
             top_signals=args.top_signals,
             use_local_db=args.local_db,
-            explain_signals=args.explain_signals,
         )
 
     return 0

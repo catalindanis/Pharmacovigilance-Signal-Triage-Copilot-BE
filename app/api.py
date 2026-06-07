@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from typing import Any
 
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -30,7 +30,7 @@ class SignalPacketResponse(BaseModel):
     literature_references: list[str]
     priority: str
     next_steps: str
-    markdown: str
+    raw_trend: dict[str, Any]
 
 
 class ExplainResponse(BaseModel):
